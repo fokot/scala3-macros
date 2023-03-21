@@ -7,9 +7,22 @@ package playground
  * sbt> runMain playground.run
  */
 
+//@main
+//def run(): Unit =
+//  val body: Int => Unit = number => println(number)
+//  println(quotesAndSplices.exercise18.unroll(3) { i => body(i) })
+
+case class Person(name: String, age: Int)
+
 @main
 def run(): Unit =
-  println("Hello world")
+  reflectionAndTrees.exercise6.explore(5)
+  reflectionAndTrees.exercise6.explore(new Person("Batman", 33))
+  println(reflectionAndTrees.exercise7.companion[Person].eq(Person))
+//  reflectionAndTrees.exercise5.typeReflect[X]
+//  val body: Int => Unit = number => println(number)
+//  reflectionAndTrees.exercise2.inspect("foo".substring(2))
+
 
 object experimental:
   val _ = ()

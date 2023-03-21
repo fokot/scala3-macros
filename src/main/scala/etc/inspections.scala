@@ -7,10 +7,10 @@ def test(): Unit =
   import exercise3.*
   var x = 10
   List(
-    // inspect("hello"),
-    // inspect(x),
-    // inspect(42),
-    // inspect("?"*3),
+     inspect("hello"),
+     inspect(x),
+     inspect(42),
+     inspect("?"*3),
     // inspect(x*x),
     // inspect(()),
     // inspect(12: Double),

@@ -6,3 +6,4 @@ project/target
 .vscode
 project/project
 metals.sbt
+.idea

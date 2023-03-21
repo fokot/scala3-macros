@@ -1,6 +1,7 @@
 package reflectionAndTrees
 
 import scala.quoted.*
+import scala.annotation.experimental
 
 /**
  * REFLECTION AND TREES
@@ -14,6 +15,7 @@ import scala.quoted.*
  * `TypeRepr`s and `Term`s, being the low-level AST elements that are used throughout the compiler.
  */
 
+// Scala AST explorer https://astexplorer.net
 object exercise1:
   /**
    * EXERCISE 1 (20 mins)
@@ -26,11 +28,12 @@ object exercise1:
    *
    * Try as many different parameter expressions as you can!
    */
-  inline def inspect(): Unit = ${inspectMacro()}
+  inline def inspect(inline any: Any): Unit = ${inspectMacro('any)}
 
-  def inspectMacro()(using Quotes): Expr[Unit] =
+  def inspectMacro(expr: Expr[Any])(using Quotes): Expr[Unit] =
     import quotes.*, reflect.*
-    '{()}
+    val shown = Expr(expr.asTerm.show(using Printer.TreeStructure))
+    '{println($shown)}
 
 object exercise2:
   /**
@@ -83,6 +86,7 @@ object exercise3:
       case Inlined(_, _, Literal(StringConstant(str))) => s"string constant: $str"
       case Inlined(_, _, Literal(IntConstant(int)))    => s"int constant: $int"
       case Inlined(_, _, Ident(name))                  => s"reference to $name"
+//      case Inlined(_,List(),Apply(Select(Apply(Ident(augmentString),List(Literal(Constant(stringConstant)))),"*"),List(Literal(Constant(3))))) => s"feri"
       case other                                       => s"???: $other"
     
     Expr(matched)
@@ -209,7 +213,9 @@ object exercise5:
   
   def typeReflectMacro[T: Type](using Quotes): Expr[Unit] =
     import quotes.reflect.*
-    '{()}
+    val repr = TypeRepr.of[T].dealias
+    val shownRepr = Expr(repr.typeSymbol.toString + ": " + repr.show(using Printer.TypeReprStructure))
+    '{ println($shownRepr) }
 
 /**
  * The types and terms we encounter in an AST are generally references to types and terms defined
@@ -246,14 +252,71 @@ object exercise6:
    *  - `sym.caseFields`
    */
 
-  inline def explore[T](value: T): Unit = ${exploreMacro[T]('value)}
+  inline def explore[T](value: T): Unit = ${ exploreMacro[T]('value) }
+
+  enum Rendering:
+    case Text(value: String)
+    case Labeled(map: Map[String, Rendering])
+    case Sequence(elements: List[Rendering])
+
+    def +(that: Rendering): Rendering = (this, that) match
+      case (Text(a), Text(b)) => Text(a + b)
+      case (Labeled(a), Labeled(b)) => Labeled(a ++ b)
+      case (a, b) => Sequence(List(a, b))
+
+    def show: String = {
+      def render(rendering: Rendering, indent: Int): String = rendering match
+        case Text(value) => value
+        case Labeled(map) =>
+          map.map { case (label, rendering) =>
+            val labelString = if label.isEmpty then "" else label + ": "
+            val rendered = render(rendering, indent + labelString.length)
+            labelString + rendered.replace("\n", "\n" + " " * indent)
+          }.mkString("\n" + " " * indent)
+
+        case Sequence(elements) =>
+          elements.map(render(_, indent)).mkString("- ", "\n" + " " * indent + "- ", "")
+
+      render(this, 0)
+    }
+
+  trait Renderable[-T]:
+    def render(value: T): Rendering
+
+  given Renderable[String] = Rendering.Text(_)
+
+  given[T: Renderable]: Renderable[List[T]] =
+    list => Rendering.Sequence(list.map(summon[Renderable[T]].render))
+
+  given[T: Renderable]: Renderable[Option[T]] = {
+    case Some(value) => summon[Renderable[T]].render(value)
+    case None => Rendering.Text("<empty>")
+  }
+
+  def render[T](value: T)(using Renderable[T]): Rendering =
+    summon[Renderable[T]].render(value)
 
   def exploreMacro[T: Type](value: Expr[T])(using Quotes): Expr[Unit] =
     import quotes.reflect.*
+    given Renderable[Term] = term => Rendering.Text(term.show(using Printer.TreeShortCode))
+
+    given Renderable[Symbol] = symbol =>
+      Rendering.Labeled(Map(
+        "name" -> render(symbol.name),
+        "fullName" -> render(symbol.fullName),
+        "annotations" -> render(symbol.annotations),
+        "declaredMethods" -> render(symbol.declaredMethods.map(_.name)),
+        "declaredFields" -> render(symbol.declaredFields.map(_.name))
+      ))
+
     val typeSymbol: Symbol = TypeRepr.of[T].typeSymbol
     val termSymbol: Symbol = value.asTerm.symbol
-    println(typeSymbol.companionClass)
-    '{()}
+
+    val rendering: String =
+      "TYPE SYMBOL\n" + render(typeSymbol).show + "\n" +
+        "TERM SYMBOL\n" + render(termSymbol).show + "\n"
+
+    '{ println(${ Expr(rendering) }) }
 
 object exercise7:
   /**
@@ -272,7 +335,12 @@ object exercise7:
    * 8. Convert the `Ref` into an expression with `asExpr`
    */
   
-  transparent inline def companion[T]: Any = ???
+  transparent inline def companion[T]: Any = ${companionMacro[T]}
+  def companionMacro[T: Type](using Quotes): Expr[Any] =
+    import quotes.reflect.*
+    val typeSymbol = TypeRepr.of[T].typeSymbol
+    val companionModule = typeSymbol.companionModule
+    Ref(companionModule).asExpr
 
 
 object exercise8:
@@ -543,3 +611,71 @@ object exercise9:
    * If opaque types work, check the bytecode that gets generated for some of these methods.
    */
   val _ = ()
+
+
+object exercise10:
+  enum Json:
+    case Null
+    case String(value: Predef.String)
+    case Number(value: BigDecimal)
+    case Boolean(value: scala.Boolean)
+    case Array(value: List[Json])
+    case Object(value: Map[Predef.String, Json])
+
+  inline def deriveEncoder[T]: JsonEncoder[T] = ${ deriveEncoderMacro[T] }
+
+  trait JsonEncoder[-T]:
+    def encode(value: T): Json
+
+  object JsonEncoder:
+    given[T: JsonEncoder]: JsonEncoder[List[T]] with
+      def encode(value: List[T]): Json =
+        Json.Array(value.map(summon[JsonEncoder[T]].encode))
+
+    given[T: JsonEncoder]: JsonEncoder[Map[String, T]] with
+      def encode(value: Map[String, T]): Json =
+        Json.Object(value.map { (k, v) => k -> summon[JsonEncoder[T]].encode(v) })
+
+    given JsonEncoder[Boolean] with
+      def encode(value: Boolean): Json = Json.Boolean(value)
+
+    given JsonEncoder[String] with
+      def encode(value: String): Json = Json.String(value)
+
+    given JsonEncoder[Double] with
+      def encode(value: Double): Json = Json.Number(value)
+
+    given JsonEncoder[BigDecimal] with
+      def encode(value: BigDecimal): Json = Json.Number(value)
+
+    given JsonEncoder[Long] with
+      def encode(value: Long): Json = Json.Number(BigDecimal(value))
+
+    given JsonEncoder[Int] with
+      def encode(value: Int): Json = Json.Number(BigDecimal(value))
+
+  @experimental
+  def deriveEncoderMacro[T: Type](using Quotes): Expr[JsonEncoder[T]] =
+    import quotes.reflect.*
+    val typeSym = TypeRepr.of[T].typeSymbol
+    if !typeSym.flags.is(Flags.Case) then
+      report.throwError(s"Can only derive encoder for case classes, but $typeSym is not a case class")
+
+    val fields = typeSym.caseFields
+    '{
+      new JsonEncoder[T] {
+        def encode(value: T): Json =
+          Json.Object(Map(${
+            fields.foldLeft[Expr[Vector[(String, Json)]]]('{ Vector.empty[(String, Json)] }) { case (code, field) =>
+              val fieldName = Expr(field.name)
+              val fieldType = field.info.asType
+              fieldType match
+                case '[t] =>
+                  val proj = Select('{ value }.asTerm, field).asExprOf[t]
+                  '{
+                    $code :+ ($fieldName -> compiletime.summonInline[JsonEncoder[t]].encode($proj))
+                  }
+            }
+          } *))
+      }
+    }

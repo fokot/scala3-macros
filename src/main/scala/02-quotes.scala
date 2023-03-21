@@ -615,4 +615,36 @@ object exercise17:
   
   given ToExpr[Polynomial] with
     def apply(poly: Polynomial)(using Quotes): Expr[Polynomial] = ???
-      
+
+object exercise18:
+  inline def unroll(maxIterations : Int)(bodz : Int => Unit) : Unit =
+    ${unrollMacro(5, 'maxIterations, 'bodz)}
+
+  def unrollMacro(unrollFactor : Int, maxIterations : Expr[Int], body: Expr[Int => Unit])(using Quotes): Expr[Unit] = {
+    import quotes.reflect.*
+    val unrollFactorExpr = Expr(unrollFactor)
+    val unrolled = '{
+      var i = 0
+      // f is here just for readability purpose
+      val f = $body
+      while(i <= ($maxIterations - $unrollFactorExpr)){
+        ${
+          val iter : Expr[Unit] = '{ f(i); i = i + 1 }
+          //A common trick to concat the statements!
+          val u = (1 to unrollFactor)
+            .map(i => iter)
+            .foldLeft[Expr[Unit]]('{})((acc, expr) => '{
+              $acc
+                $expr
+            })
+          u
+        }
+      }
+      while(i < $maxIterations){
+        f(i)
+        i = i + 1
+      }
+    }
+    val shown = Expr(unrolled.show)
+    '{println($shown); $unrolled}
+  }
